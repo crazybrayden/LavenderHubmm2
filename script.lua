@@ -60,7 +60,7 @@ local CurrentSpeed = 10
 local isRunning = false
 local visitedCoins = {}
 local hasReset = false
-local TELEPORT_DISTANCE = 50 -- Distance threshold for teleporting instead of tweening
+local TELEPORT_DISTANCE = 250 -- Distance threshold for teleporting instead of tweening
 
 -- Create 12 speed options (from 1 to 23 studs/sec, increasing by 2 each step)
 local speedOptions = {}
