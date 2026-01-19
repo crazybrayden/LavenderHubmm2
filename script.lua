@@ -56,13 +56,8 @@ local CurrentSpeed = 10
 local isRunning = false
 local visitedCoins = {}
 local hasReset = false
-
-local speedOptions = {}
-for i = 1, 12 do
-    local speed = 1 + ((i - 1) * 2)
-    if speed > 23 then speed = 23 end
-    speedOptions[i] = tostring(speed) .. " studs/sec"
-end
+local isTweening = false
+local currentTweenConnection = nil
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -133,12 +128,30 @@ local function findNearestCoin(coinContainer)
     return nearestCoin
 end
 
+local function stopCurrentTween()
+    if currentTweenConnection then
+        currentTweenConnection:Disconnect()
+        currentTweenConnection = nil
+    end
+    if humanoidRootPart and humanoidRootPart:FindFirstChild("MovementActive") then
+        humanoidRootPart.MovementActive:Destroy()
+    end
+    if humanoid then
+        humanoid.AutoRotate = true
+        humanoid:ChangeState(Enum.HumanoidStateType.Running)
+    end
+    isTweening = false
+end
+
 local function tweenToCoin(coin)
-    if not coin or not humanoidRootPart then
-        return
+    if not coin or not humanoidRootPart or not humanoid then
+        return false
     end
     
+    stopCurrentTween()
+    
     visitedCoins[coin] = true
+    isTweening = true
     
     local SPEED = CurrentSpeed
     local TARGET_HEIGHT = 3
@@ -169,7 +182,7 @@ local function tweenToCoin(coin)
     local startTime = tick()
     local connection
     connection = RunService.Heartbeat:Connect(function()
-        if not movementTracker.Parent then
+        if not movementTracker.Parent or not isRunning or not AutoFarmEnabled then
             connection:Disconnect()
             return
         end
@@ -203,8 +216,11 @@ local function tweenToCoin(coin)
             humanoidRootPart.Velocity = Vector3.zero
             task.wait(0.1)
             humanoidRootPart.Velocity = Vector3.zero
+            isTweening = false
         end
     end)
+    
+    currentTweenConnection = connection
     
     if character then
         character.AncestryChanged:Connect(function()
@@ -218,6 +234,8 @@ local function tweenToCoin(coin)
     end
     
     task.wait(duration + 0.2)
+    isTweening = false
+    return true
 end
 
 local function checkForAllCoinVisualsGone()
@@ -247,6 +265,7 @@ local function checkForAllCoinVisualsGone()
 
         if allCoinVisualsGone then
             isRunning = false
+            stopCurrentTween()
         end
     end
 end
@@ -258,6 +277,29 @@ local function playFallingAnimation()
     end
 end
 
+local function checkForAreaChange()
+    local lastPosition = humanoidRootPart and humanoidRootPart.Position or Vector3.new(0, 0, 0)
+    while isRunning and AutoFarmEnabled do
+        task.wait(0.5)
+        if humanoidRootPart and isTweening then
+            local currentPos = humanoidRootPart.Position
+            local distanceMoved = (currentPos - lastPosition).Magnitude
+            
+            if distanceMoved > 50 then
+                stopCurrentTween()
+                WindUI:Notify({
+                    Title = "Area Change Detected",
+                    Content = "Stopped tweening due to area change",
+                    Duration = 3,
+                    Icon = "alert-circle",
+                })
+            end
+            
+            lastPosition = currentPos
+        end
+    end
+end
+
 local function collectCoins()
     while isRunning and AutoFarmEnabled do
         if not character or not humanoidRootPart or not humanoid or not character.Parent then
@@ -266,6 +308,7 @@ local function collectCoins()
 
         local coinContainer = findActiveCoinContainer()
         if not coinContainer then
+            stopCurrentTween()
             task.wait(1)
             continue
         end
@@ -273,6 +316,7 @@ local function collectCoins()
         local targetCoin = findNearestCoin(coinContainer)
         if not targetCoin then
             checkForAllCoinVisualsGone()
+            stopCurrentTween()
             task.wait(0.5)
             continue
         end
@@ -293,11 +337,14 @@ end
 player.CharacterAdded:Connect(function(newCharacter)
     character = newCharacter
     hasReset = false
+    stopCurrentTween()
     
     if AutoFarmEnabled and isRunning then
         task.wait(1)
         coroutine.wrap(function()
             character, humanoidRootPart, humanoid = initializeCharacter()
+            coroutine.wrap(checkForAreaChange)()
+            coroutine.wrap(collectCoins)()
         end)()
     end
 end)
@@ -329,9 +376,11 @@ local AutofarmToggle = AutofarmSection:Toggle({
                 Icon = "play",
             })
             
+            coroutine.wrap(checkForAreaChange)()
             coroutine.wrap(collectCoins)()
         else
             isRunning = false
+            stopCurrentTween()
             WindUI:Notify({
                 Title = "Autofarm",
                 Content = "Coin autofarm disabled!",
@@ -342,13 +391,14 @@ local AutofarmToggle = AutofarmSection:Toggle({
     end
 })
 
-local SpeedDropdown = AutofarmSection:Dropdown({
+local SpeedSlider = AutofarmSection:Slider({
     Title = "Tween Speed",
-    Desc = "Select movement speed (max: 23 studs/sec)",
-    Values = speedOptions,
-    Value = "10 studs/sec",
-    Callback = function(option)
-        CurrentSpeed = tonumber(option:match("%d+"))
+    Desc = "Adjust movement speed (1-12 studs/sec)",
+    Min = 1,
+    Max = 12,
+    Value = 10,
+    Callback = function(value)
+        CurrentSpeed = value
         WindUI:Notify({
             Title = "Speed Changed",
             Content = "Tween speed set to " .. CurrentSpeed .. " studs/sec",
@@ -369,8 +419,12 @@ coroutine.wrap(function()
         task.wait(1)
         if AutofarmToggle and StatusLabel then
             if AutoFarmEnabled and isRunning then
-                StatusLabel:SetTitle("Status: Active (Speed: " .. CurrentSpeed .. " studs/sec)")
-                StatusLabel:SetDesc("Collecting coins...")
+                if isTweening then
+                    StatusLabel:SetTitle("Status: Active (Tweening)")
+                else
+                    StatusLabel:SetTitle("Status: Active (Searching)")
+                end
+                StatusLabel:SetDesc("Speed: " .. CurrentSpeed .. " studs/sec")
                 StatusLabel.Color = "Green"
             else
                 StatusLabel:SetTitle("Status: Inactive")
@@ -625,6 +679,7 @@ MiscSection:Button({
     Title = "Get Gun",
     Desc = "Attempt to get the gun",
     Callback = function()
+        stopCurrentTween()
         local gunDrop = Workspace:FindFirstChild("GunDrop")
         if gunDrop then
             local char = game.Players.LocalPlayer.Character
