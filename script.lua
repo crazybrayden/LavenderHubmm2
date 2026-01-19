@@ -1,5 +1,6 @@
 local WindUI = loadstring(game:HttpGet("https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"))()
 
+-- Apply gradient theme
 WindUI:Gradient({                                                      
     ["0"] = { Color = Color3.fromHex("#1f1f23"), Transparency = 0 },            
     ["100"]   = { Color = Color3.fromHex("#18181b"), Transparency = 0 },      
@@ -28,6 +29,7 @@ local Window = WindUI:CreateWindow({
     },
 })
 
+-- Add Discord tag
 Window:Tag({
     Title = "Discord",
     Icon = "lucide:discord",
@@ -45,20 +47,30 @@ Window:Tag({
 
 Window:Divider()
 
+-- Create Autofarm Tab (First and most important)
 local AutofarmTab = Window:Tab({
     Title = "Autofarm",
     Icon = "coins",
 })
 AutofarmTab:Select()
 
+-- AutoFarm Variables
 local AutoFarmEnabled = false
 local CurrentSpeed = 10
 local isRunning = false
 local visitedCoins = {}
 local hasReset = false
-local isTweening = false
-local currentTweenConnection = nil
+local TELEPORT_DISTANCE = 50 -- Distance threshold for teleporting instead of tweening
 
+-- Create 12 speed options (from 1 to 23 studs/sec, increasing by 2 each step)
+local speedOptions = {}
+for i = 1, 12 do
+    local speed = 1 + ((i - 1) * 2)
+    if speed > 23 then speed = 23 end
+    speedOptions[i] = tostring(speed) .. " studs/sec"
+end
+
+-- Services
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
@@ -67,6 +79,7 @@ local TweenService = game:GetService("TweenService")
 local player = Players.LocalPlayer
 local character, humanoidRootPart, humanoid
 
+-- Initialize character
 local function initializeCharacter()
     character = player.Character or player.CharacterAdded:Wait()
     humanoidRootPart = character:WaitForChild("HumanoidRootPart", 5)
@@ -74,6 +87,7 @@ local function initializeCharacter()
     return character, humanoidRootPart, humanoid
 end
 
+-- List of possible maps
 local mapPaths = {
     "IceCastle",
     "SkiLodge",
@@ -94,6 +108,7 @@ local mapPaths = {
     "ChristmasItaly"
 }
 
+-- Find active coin container
 local function findActiveCoinContainer()
     for _, mapName in ipairs(mapPaths) do
         local map = Workspace:FindFirstChild(mapName)
@@ -107,6 +122,7 @@ local function findActiveCoinContainer()
     return nil
 end
 
+-- Find nearest coin
 local function findNearestCoin(coinContainer)
     if not humanoidRootPart then return nil end
     
@@ -128,32 +144,37 @@ local function findNearestCoin(coinContainer)
     return nearestCoin
 end
 
-local function stopCurrentTween()
-    if currentTweenConnection then
-        currentTweenConnection:Disconnect()
-        currentTweenConnection = nil
+-- Teleport to coin (for long distances)
+local function teleportToCoin(coin)
+    if not coin or not humanoidRootPart then
+        return
     end
-    if humanoidRootPart and humanoidRootPart:FindFirstChild("MovementActive") then
-        humanoidRootPart.MovementActive:Destroy()
-    end
-    if humanoid then
-        humanoid.AutoRotate = true
-        humanoid:ChangeState(Enum.HumanoidStateType.Running)
-    end
-    isTweening = false
-end
-
-local function tweenToCoin(coin)
-    if not coin or not humanoidRootPart or not humanoid then
-        return false
-    end
-    
-    stopCurrentTween()
     
     visitedCoins[coin] = true
-    isTweening = true
     
-    local SPEED = CurrentSpeed
+    local TARGET_HEIGHT = 3
+    
+    local currentOrientation = humanoidRootPart.CFrame.Rotation
+    humanoidRootPart.CFrame = CFrame.new(
+        coin.Position.X,
+        coin.Position.Y + TARGET_HEIGHT,
+        coin.Position.Z
+    ) * currentOrientation
+    
+    humanoidRootPart.Velocity = Vector3.zero
+    task.wait(0.1)
+    humanoidRootPart.Velocity = Vector3.zero
+end
+
+-- Tween to coin with adjustable speed
+local function tweenToCoin(coin)
+    if not coin or not humanoidRootPart then
+        return
+    end
+    
+    visitedCoins[coin] = true
+    
+    local SPEED = CurrentSpeed -- Use the selected speed
     local TARGET_HEIGHT = 3
     local ANTI_FLING_FORCE = Vector3.new(0, -5, 0)
     
@@ -182,7 +203,7 @@ local function tweenToCoin(coin)
     local startTime = tick()
     local connection
     connection = RunService.Heartbeat:Connect(function()
-        if not movementTracker.Parent or not isRunning or not AutoFarmEnabled then
+        if not movementTracker.Parent then
             connection:Disconnect()
             return
         end
@@ -216,11 +237,8 @@ local function tweenToCoin(coin)
             humanoidRootPart.Velocity = Vector3.zero
             task.wait(0.1)
             humanoidRootPart.Velocity = Vector3.zero
-            isTweening = false
         end
     end)
-    
-    currentTweenConnection = connection
     
     if character then
         character.AncestryChanged:Connect(function()
@@ -234,10 +252,9 @@ local function tweenToCoin(coin)
     end
     
     task.wait(duration + 0.2)
-    isTweening = false
-    return true
 end
 
+-- Check for all coin visuals gone
 local function checkForAllCoinVisualsGone()
     local coinContainer = findActiveCoinContainer()
 
@@ -265,11 +282,11 @@ local function checkForAllCoinVisualsGone()
 
         if allCoinVisualsGone then
             isRunning = false
-            stopCurrentTween()
         end
     end
 end
 
+-- Play falling animation
 local function playFallingAnimation()
     if humanoid then
         humanoid:SetStateEnabled(Enum.HumanoidStateType.Freefall, true)
@@ -277,83 +294,70 @@ local function playFallingAnimation()
     end
 end
 
-local function checkForAreaChange()
-    local lastPosition = humanoidRootPart and humanoidRootPart.Position or Vector3.new(0, 0, 0)
-    while isRunning and AutoFarmEnabled do
-        task.wait(0.5)
-        if humanoidRootPart and isTweening then
-            local currentPos = humanoidRootPart.Position
-            local distanceMoved = (currentPos - lastPosition).Magnitude
-            
-            if distanceMoved > 50 then
-                stopCurrentTween()
-                WindUI:Notify({
-                    Title = "Area Change Detected",
-                    Content = "Stopped tweening due to area change",
-                    Duration = 3,
-                    Icon = "alert-circle",
-                })
-            end
-            
-            lastPosition = currentPos
-        end
-    end
-end
-
+-- Main coin collection function
 local function collectCoins()
     while isRunning and AutoFarmEnabled do
+        -- Ensure character is initialized
         if not character or not humanoidRootPart or not humanoid or not character.Parent then
             character, humanoidRootPart, humanoid = initializeCharacter()
         end
 
+        -- Find coin container
         local coinContainer = findActiveCoinContainer()
         if not coinContainer then
-            stopCurrentTween()
             task.wait(1)
             continue
         end
 
+        -- Find nearest coin
         local targetCoin = findNearestCoin(coinContainer)
         if not targetCoin then
             checkForAllCoinVisualsGone()
-            stopCurrentTween()
             task.wait(0.5)
             continue
         end
 
+        -- Check if all coins are gone
         checkForAllCoinVisualsGone()
         if not isRunning then break end
 
-        tweenToCoin(targetCoin)
+        -- Check distance and decide whether to teleport or tween
+        local distanceToCoin = (humanoidRootPart.Position - targetCoin.Position).Magnitude
+        if distanceToCoin >= TELEPORT_DISTANCE then
+            teleportToCoin(targetCoin)
+        else
+            tweenToCoin(targetCoin)
+        end
 
+        -- Play animation
         playFallingAnimation()
 
+        -- Check again
         checkForAllCoinVisualsGone()
 
         task.wait(0.1)
     end
 end
 
+-- Handle character respawns
 player.CharacterAdded:Connect(function(newCharacter)
     character = newCharacter
     hasReset = false
-    stopCurrentTween()
     
     if AutoFarmEnabled and isRunning then
         task.wait(1)
         coroutine.wrap(function()
             character, humanoidRootPart, humanoid = initializeCharacter()
-            coroutine.wrap(checkForAreaChange)()
-            coroutine.wrap(collectCoins)()
         end)()
     end
 end)
+
 local AutofarmSection = AutofarmTab:Section({
     Title = "Coin Autofarm",
     Icon = "zap",
     Opened = true,
 })
-
+-- Autofarm Toggle
 local AutofarmToggle = AutofarmSection:Toggle({
     Title = "Enable Autofarm",
     Desc = "Automatically collects coins",
@@ -367,6 +371,7 @@ local AutofarmToggle = AutofarmSection:Toggle({
             hasReset = false
             visitedCoins = {}
             
+            -- Initialize character
             character, humanoidRootPart, humanoid = initializeCharacter()
             
             WindUI:Notify({
@@ -376,11 +381,10 @@ local AutofarmToggle = AutofarmSection:Toggle({
                 Icon = "play",
             })
             
-            coroutine.wrap(checkForAreaChange)()
+            -- Start collecting
             coroutine.wrap(collectCoins)()
         else
             isRunning = false
-            stopCurrentTween()
             WindUI:Notify({
                 Title = "Autofarm",
                 Content = "Coin autofarm disabled!",
@@ -391,14 +395,14 @@ local AutofarmToggle = AutofarmSection:Toggle({
     end
 })
 
-local SpeedSlider = AutofarmSection:Slider({
+-- Speed Dropdown
+local SpeedDropdown = AutofarmSection:Dropdown({
     Title = "Tween Speed",
-    Desc = "Adjust movement speed (1-12 studs/sec)",
-    Min = 1,
-    Max = 12,
-    Value = 10,
-    Callback = function(value)
-        CurrentSpeed = value
+    Desc = "Select movement speed (max: 23 studs/sec)",
+    Values = speedOptions,
+    Value = "10 studs/sec",
+    Callback = function(option)
+        CurrentSpeed = tonumber(option:match("%d+"))
         WindUI:Notify({
             Title = "Speed Changed",
             Content = "Tween speed set to " .. CurrentSpeed .. " studs/sec",
@@ -408,23 +412,21 @@ local SpeedSlider = AutofarmSection:Slider({
     end
 })
 
+-- Status Display
 local StatusLabel = AutofarmSection:Paragraph({
     Title = "Status: Inactive",
     Desc = "Autofarm is currently disabled",
     Color = "Red",
 })
 
+-- Update status periodically
 coroutine.wrap(function()
     while true do
         task.wait(1)
         if AutofarmToggle and StatusLabel then
             if AutoFarmEnabled and isRunning then
-                if isTweening then
-                    StatusLabel:SetTitle("Status: Active (Tweening)")
-                else
-                    StatusLabel:SetTitle("Status: Active (Searching)")
-                end
-                StatusLabel:SetDesc("Speed: " .. CurrentSpeed .. " studs/sec")
+                StatusLabel:SetTitle("Status: Active (Speed: " .. CurrentSpeed .. " studs/sec)")
+                StatusLabel:SetDesc("Collecting coins...")
                 StatusLabel.Color = "Green"
             else
                 StatusLabel:SetTitle("Status: Inactive")
@@ -435,6 +437,7 @@ coroutine.wrap(function()
     end
 end)()
 
+-- ESP Setup
 local ESPFolder = Instance.new("Folder")
 ESPFolder.Name = "ESP Holder"
 ESPFolder.Parent = game.CoreGui
@@ -459,29 +462,32 @@ local function AddBillboard(player)
     TextLabel.Parent = Billboard
 
     repeat
-        wait()
+        task.wait()
         pcall(function()
-            Billboard.Adornee = player.Character.Head
-            if player.Character:FindFirstChild("Knife") or player.Backpack:FindFirstChild("Knife") then
-                TextLabel.TextColor3 = Color3.new(1, 0, 0)
-                if getgenv().MurderEsp then
-                    Billboard.Enabled = true
-                end
-            elseif player.Character:FindFirstChild("Gun") or player.Backpack:FindFirstChild("Gun") then
-                TextLabel.TextColor3 = Color3.new(0, 0, 1)
-                if getgenv().SheriffEsp then
-                    Billboard.Enabled = true
-                end
-            else
-                TextLabel.TextColor3 = Color3.new(0, 1, 0)
-                if getgenv().AllEsp then
-                    Billboard.Enabled = true
+            if player.Character and player.Character:FindFirstChild("Head") then
+                Billboard.Adornee = player.Character.Head
+                if player.Character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife")) then
+                    TextLabel.TextColor3 = Color3.new(1, 0, 0)
+                    if getgenv().MurderEsp then
+                        Billboard.Enabled = true
+                    end
+                elseif player.Character:FindFirstChild("Gun") or (player.Backpack and player.Backpack:FindFirstChild("Gun")) then
+                    TextLabel.TextColor3 = Color3.new(0, 0, 1)
+                    if getgenv().SheriffEsp then
+                        Billboard.Enabled = true
+                    end
+                else
+                    TextLabel.TextColor3 = Color3.new(0, 1, 0)
+                    if getgenv().AllEsp then
+                        Billboard.Enabled = true
+                    end
                 end
             end
         end)
     until not player.Parent
 end
 
+-- Initialize ESP for existing players
 for _, player in pairs(game.Players:GetPlayers()) do
     if player ~= game.Players.LocalPlayer then
         coroutine.wrap(AddBillboard)(player)
@@ -501,17 +507,25 @@ game.Players.PlayerRemoving:Connect(function(player)
     end
 end)
 
+-- Create Main Tab
 local MainTab = Window:Tab({
     Title = "Main",
     Icon = "sword",
 })
 
+-- Create ESP Section
 local ESPSection = MainTab:Section({
     Title = "ESP",
     Icon = "eye",
     Opened = true,
 })
 
+-- Initialize ESP globals
+getgenv().AllEsp = false
+getgenv().MurderEsp = false
+getgenv().SheriffEsp = false
+
+-- ESP Toggles
 local AllESP = ESPSection:Toggle({
     Title = "Every Player ESP",
     Desc = "Shows ESP for all players",
@@ -524,8 +538,8 @@ local AllESP = ESPSection:Toggle({
                 local playerName = billboard.Name:sub(1, -10)
                 local player = game.Players:FindFirstChild(playerName)
                 if player and player.Character then
-                    local hasKnife = player.Character:FindFirstChild("Knife") or player.Backpack:FindFirstChild("Knife")
-                    local hasGun = player.Character:FindFirstChild("Gun") or player.Backpack:FindFirstChild("Gun")
+                    local hasKnife = (player.Character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife")))
+                    local hasGun = (player.Character:FindFirstChild("Gun") or (player.Backpack and player.Backpack:FindFirstChild("Gun")))
                     if not (hasKnife or hasGun) then
                         billboard.Enabled = state
                     end
@@ -546,7 +560,7 @@ local MurderESP = ESPSection:Toggle({
             if billboard:IsA("BillboardGui") then
                 local playerName = billboard.Name:sub(1, -10)
                 local player = game.Players:FindFirstChild(playerName)
-                if player and (player.Character:FindFirstChild("Knife") or player.Backpack:FindFirstChild("Knife")) then
+                if player and (player.Character:FindFirstChild("Knife") or (player.Backpack and player.Backpack:FindFirstChild("Knife"))) then
                     billboard.Enabled = state
                 end
             end
@@ -565,7 +579,7 @@ local SheriffESP = ESPSection:Toggle({
             if billboard:IsA("BillboardGui") then
                 local playerName = billboard.Name:sub(1, -10)
                 local player = game.Players:FindFirstChild(playerName)
-                if player and (player.Character:FindFirstChild("Gun") or player.Backpack:FindFirstChild("Gun")) then
+                if player and (player.Character:FindFirstChild("Gun") or (player.Backpack and player.Backpack:FindFirstChild("Gun"))) then
                     billboard.Enabled = state
                 end
             end
@@ -573,12 +587,14 @@ local SheriffESP = ESPSection:Toggle({
     end
 })
 
+-- Create Role Information Section
 local RoleSection = MainTab:Section({
     Title = "Role Information",
     Icon = "user",
     Opened = true,
 })
 
+-- Role Labels
 local MurdererLabel = RoleSection:Paragraph({
     Title = "Murderer is: Unknown",
     Desc = "Detecting murderer...",
@@ -597,6 +613,7 @@ local GunLabel = RoleSection:Paragraph({
     Color = "Green",
 })
 
+-- Function to check and update the roles
 local function updateRolesInfo()
     while true do
         task.wait(1)
@@ -629,8 +646,10 @@ local function updateRolesInfo()
     end
 end
 
+-- Start updating the Murderer and Sheriff information
 coroutine.wrap(updateRolesInfo)()
 
+-- Gun Drop Detection
 coroutine.wrap(function()
     local gunDropped = false
     while true do
@@ -663,7 +682,7 @@ coroutine.wrap(function()
         end
     end
 end)()
-
+-- Create Misc Tab
 local MiscTab = Window:Tab({
     Title = "Misc",
     Icon = "settings",
@@ -675,11 +694,11 @@ local MiscSection = MiscTab:Section({
     Opened = true,
 })
 
+-- Get Gun Button
 MiscSection:Button({
     Title = "Get Gun",
     Desc = "Attempt to get the gun",
     Callback = function()
-        stopCurrentTween()
         local gunDrop = Workspace:FindFirstChild("GunDrop")
         if gunDrop then
             local char = game.Players.LocalPlayer.Character
@@ -706,6 +725,7 @@ MiscSection:Button({
     end
 })
 
+-- Chat Expose Roles Button
 MiscSection:Button({
     Title = "Expose Roles in Chat",
     Desc = "Reveal murderer and sheriff in chat",
@@ -745,6 +765,77 @@ MiscSection:Button({
     end
 })
 
+-- Teleport to Murderer Button (from your reference script)
+MiscSection:Button({
+    Title = "Teleport to Murderer",
+    Desc = "Teleport to the player with the knife",
+    Callback = function()
+        for _, v in pairs(game:GetService("Players"):GetPlayers()) do
+            if v.Character:FindFirstChild("Knife") or v.Backpack:FindFirstChild("Knife") then
+                local char = game.Players.LocalPlayer.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    char.HumanoidRootPart.CFrame = v.Character.HumanoidRootPart.CFrame * CFrame.new(0, 3, 0)
+                    WindUI:Notify({
+                        Title = "Teleport",
+                        Content = "Teleported to murderer!",
+                        Duration = 3,
+                        Icon = "target",
+                    })
+                    break
+                end
+            end
+        end
+    end
+})
+
+-- Teleport to Sheriff Button (from your reference script)
+MiscSection:Button({
+    Title = "Teleport to Sheriff",
+    Desc = "Teleport to the player with the gun",
+    Callback = function()
+        for _, v in pairs(game:GetService("Players"):GetPlayers()) do
+            if v.Character:FindFirstChild("Gun") or v.Backpack:FindFirstChild("Gun") then
+                local char = game.Players.LocalPlayer.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    local localHumanoid = char:FindFirstChild("Humanoid")
+                    local localHRP = char:FindFirstChild("HumanoidRootPart")
+                    
+                    if localHumanoid and localHRP then
+                        -- Save original values
+                        local originalWalkSpeed = localHumanoid.WalkSpeed
+                        local originalJumpPower = localHumanoid.JumpPower
+                        local previousPosition = localHRP.CFrame
+                        
+                        -- Set to 0 to prevent movement
+                        localHumanoid.WalkSpeed = 0
+                        localHumanoid.JumpPower = 0
+                        
+                        -- Teleport to sheriff
+                        localHRP.CFrame = v.Character.HumanoidRootPart.CFrame
+                        
+                        -- Wait and teleport back
+                        task.wait(0.5)
+                        localHRP.CFrame = previousPosition
+                        
+                        -- Restore values
+                        localHumanoid.WalkSpeed = originalWalkSpeed
+                        localHumanoid.JumpPower = originalJumpPower
+                        
+                        WindUI:Notify({
+                            Title = "Teleport",
+                            Content = "Teleported to sheriff and back!",
+                            Duration = 3,
+                            Icon = "target",
+                        })
+                        break
+                    end
+                end
+            end
+        end
+    end
+})
+
+-- Send welcome notification
 WindUI:Notify({
     Title = "Lavender Hub",
     Content = "Successfully loaded! Made by 2lev1/sal",
@@ -752,4 +843,5 @@ WindUI:Notify({
     Icon = "flower",
 })
 
+-- Initialize autofarm status
 character, humanoidRootPart, humanoid = initializeCharacter()
